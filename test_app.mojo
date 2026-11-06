@@ -159,6 +159,16 @@ def test_removing_an_object_frees_its_cells() raises:
     assert_equal(d.objects[0], [2])
 
 
+def test_removing_a_missing_object_raises() raises:
+    var d = app.Decomposition(app.Grid(rows=1, cols=3, cells=[1, 0, 0]))
+    d.add_object([0])
+    with assert_raises():
+        d.remove_object(1)
+    with assert_raises():
+        d.remove_object(-1)
+    assert_equal(len(d.objects), 1)
+
+
 def test_background_defaults_to_most_common_color() raises:
     var grid = app.Grid(rows=1, cols=3, cells=[3, 3, 0])
     var d = app.Decomposition(grid)
@@ -173,6 +183,19 @@ def test_labeler_can_override_background() raises:
     assert_equal(d.background, 0)
     assert_equal(d.background_source, "labeler")
     assert_equal(d.unclaimed(), [0, 1])
+
+
+def test_labeler_can_change_background_before_adding_objects() raises:
+    var d = app.Decomposition(app.Grid(rows=1, cols=3, cells=[3, 3, 0]))
+    d.set_background(0)
+    assert_equal(d.background, 0)
+    assert_equal(d.background_source, "labeler")
+    d.add_object([0, 1])
+    with assert_raises(contains="objects"):
+        d.set_background(3)
+    var fresh = app.Decomposition(app.Grid(rows=1, cols=3, cells=[3, 3, 0]))
+    with assert_raises():
+        fresh.set_background(10)
 
 
 def test_background_override_must_be_a_color() raises:

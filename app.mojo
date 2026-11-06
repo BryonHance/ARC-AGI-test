@@ -89,6 +89,14 @@ struct Decomposition(Copyable, Movable):
         self.flagged = False
         self.note = ""
 
+    def set_background(mut self, color: Int) raises:
+        if color < 0 or color >= NUM_COLORS:
+            raise Error(t"Background {color} is not a color")
+        if len(self.objects) > 0:
+            raise Error("Remove all objects before changing the background")
+        self.background = color
+        self.background_source = "labeler"
+
     def add_object(mut self, cells: List[Int]) raises:
         if len(cells) == 0:
             raise Error("An object needs at least one cell")
@@ -104,7 +112,9 @@ struct Decomposition(Copyable, Movable):
         self.objects.append(cells.copy())
         _sort_reading_order(self.objects)
 
-    def remove_object(mut self, index: Int):
+    def remove_object(mut self, index: Int) raises:
+        if index < 0 or index >= len(self.objects):
+            raise Error(t"No object {index}")
         _ = self.objects.pop(index)
 
     def claimed(self) -> List[Bool]:

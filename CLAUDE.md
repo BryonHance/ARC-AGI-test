@@ -8,6 +8,8 @@ This is the ARC-AGI-1 dataset (`data/`), a static browser UI for solving tasks b
 
 - Domain terms are in `GLOSSARY.md`. Use them in code, and respect each term's _Avoid_ list.
 - Run the tests with `.venv/bin/mojo run test_app.mojo`. Test fixtures live in `tests/fixtures/`.
+- The tkinter UI (`src/arc_agi_test/ui.py`) reaches the core only through the thin binding `labeling.mojo`, which is tested with `.venv/bin/python -m unittest tests.test_labeling_binding`. Keep labeling rules in `app.mojo`, not in the binding or the UI.
+- Launch the UI with `.venv/bin/arc-agi-test`. It saves labels to `objects/<dataset>/<task>/`.
 - TestSuite reports bogus durations of about 28 s for tests that use Python interop. The real run takes a few seconds, so check with `time`.
 
 ## Data
