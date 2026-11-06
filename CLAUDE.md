@@ -2,12 +2,21 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is the ARC-AGI-1 dataset (`data/`) plus a static browser UI for solving tasks by hand (`apps/`). There is no build, package manager, linter, or test suite. The task JSON format and the UI controls are covered in `README.md`.
+This is the ARC-AGI-1 dataset (`data/`), a static browser UI for solving tasks by hand (`apps/`), and a Mojo object-labeling core (`app.mojo`). The task JSON format and the UI controls are covered in `README.md`.
+
+## Object labeling core
+
+- Domain terms are in `GLOSSARY.md`. Use them in code, and respect each term's _Avoid_ list.
+- Run the tests with `.venv/bin/mojo run test_app.mojo`. Test fixtures live in `tests/fixtures/`.
+- The tkinter UI (`src/arc_agi_test/ui.py`) reaches the core only through the thin binding `labeling.mojo`, which is tested with `.venv/bin/python -m unittest tests.test_labeling_binding`. Keep labeling rules in `app.mojo`, not in the binding or the UI.
+- Launch the UI with `.venv/bin/arc-agi-test`. It saves labels to `objects/<dataset>/<task>/`.
+- TestSuite reports bogus durations of about 28 s for tests that use Python interop. The real run takes a few seconds, so check with `time`.
 
 ## Data
 
 - `data/training/` and `data/evaluation/` each hold 400 tasks named `<8-hex-id>.json`.
 - **Evaluation is held out.** When building or tuning a solver, develop against `training/` only. Open evaluation tasks only for a final scoring run the user asks for. Reading them while iterating leaks the test set (see README).
+- **Exception: object labeling.** The labeling app decomposes evaluation Grids on purpose, to produce ground truth for scoring object-perception models (see `docs/adr/0001-evaluation-decompositions-as-ground-truth.md`). Opening evaluation tasks inside that app is expected. Never train on `objects/evaluation/`.
 - Scoring is exact match: output dimensions plus every cell, up to 3 attempts per test input. A task counts as solved only when all of its test inputs are solved.
 
 ## Testing interface (`apps/`)
