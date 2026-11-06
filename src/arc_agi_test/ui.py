@@ -4,6 +4,7 @@ A thin layer over the Mojo core (app.mojo, via the labeling.mojo binding).
 Vocabulary follows GLOSSARY.md.
 """
 import json
+import subprocess
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -65,6 +66,23 @@ def build_queue(dataset):
     return queue
 
 
+def commit_labels(repo, objects, progress_lines):
+    """Commit only the objects/ folder. Returns a one-line result for the status bar."""
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True).stdout
+
+    rel = str(objects.relative_to(repo))
+    changed = [line[3:] for line in git("status", "--porcelain", "--untracked-files=all", "--", rel).splitlines()]
+    if not changed:
+        return "No label changes to commit"
+    # Count Grids, not files: each Grid has one decomposition file plus one file per Object.
+    grids = {Path(p.strip('"')).name.split("_obj")[0].removesuffix(".json") for p in changed}
+    subject = f"Update labels for {len(grids)} Grid{'s' if len(grids) != 1 else ''}"
+    git("add", "--all", "--", rel)
+    git("commit", "-m", subject, "-m", "\n".join(progress_lines), "--", rel)
+    return f"Committed: {subject} ({git('rev-parse', '--short', 'HEAD').strip()})"
+
+
 class LabelingApp:
     def __init__(self, root):
         self.root = root
@@ -98,6 +116,7 @@ class LabelingApp:
         jump.pack(side="left")
         jump.bind("<Return>", lambda e: self.jump_to_task())
         ttk.Button(top, text="Go", command=self.jump_to_task).pack(side="left", padx=2)
+        ttk.Button(top, text="Commit labels", command=self.commit).pack(side="right", padx=(8, 0))
         self.progress = ttk.Label(top, text="")
         self.progress.pack(side="right")
 
@@ -307,6 +326,17 @@ class LabelingApp:
         self.set_status("Saved")
         self.refresh()
         return True
+
+    def commit(self):
+        lines = []
+        for dataset, states in self.states.items():
+            done = sum(s == "complete" for s in states)
+            flagged = sum(s == "flagged" for s in states)
+            lines.append(f"{dataset}: {done}/{len(states)} complete, {flagged} flagged")
+        try:
+            self.set_status(commit_labels(REPO, OBJECTS_ROOT, lines))
+        except subprocess.CalledProcessError as e:
+            self.set_status(f"git failed: {(e.stderr or e.stdout).strip()}")
 
     # ---- drawing ------------------------------------------------------------
 
