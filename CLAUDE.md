@@ -2,7 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is the ARC-AGI-1 dataset (`data/`) plus a static browser UI for solving tasks by hand (`apps/`). There is no build, package manager, linter, or test suite. The task JSON format and the UI controls are covered in `README.md`.
+This is the ARC-AGI-1 dataset (`data/`), a static browser UI for solving tasks by hand (`apps/`), and a Mojo object-labeling core (`app.mojo`). The task JSON format and the UI controls are covered in `README.md`.
+
+## Object labeling core
+
+- Domain terms are in `GLOSSARY.md`. Use them in code, and respect each term's _Avoid_ list.
+- Run the tests with `.venv/bin/mojo run test_app.mojo`. Test fixtures live in `tests/fixtures/`.
+- TestSuite reports bogus durations of about 28 s for tests that use Python interop. The real run takes a few seconds, so check with `time`.
 
 ## Data
 

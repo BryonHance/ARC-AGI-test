@@ -4,7 +4,7 @@ from std.tempfile import mkdtemp
 from std.testing import assert_equal, assert_raises, TestSuite
 import app
 
-comptime FILE = "./data/test_training/12345678.json"
+comptime FILE = "./tests/fixtures/12345678.json"
 comptime JSON_STR = '{"train": [{"input": [[0, 1], [2, 3]], "output": [[1, 2], [3, 4]]}, {"input": [[0, 4], [0, 0]], "output":[[0, 5], [0, 0]]}], "test": [{"input": [[4, 5], [6, 7]], "output": [[5, 6], [7, 8]]}]}'
 
 def test_get_path() raises:
@@ -71,14 +71,23 @@ def test_propose_from_background_or_claimed_cell_is_empty() raises:
     assert_equal(app.propose(grid, 0, 0, claimed, 0), List[Int]())
 
 
-def test_all_background_grid_is_complete_with_zero_objects() raises:
+def test_propose_outside_the_grid_raises() raises:
+    var grid = app.Grid(rows=1, cols=2, cells=[1, 0])
+    var claimed = List[Bool](length=2, fill=False)
+    with assert_raises():
+        _ = app.propose(grid, 1, 0, claimed, 0)
+    with assert_raises():
+        _ = app.propose(grid, 0, -1, claimed, 0)
+
+
+def test_all_background_decomposition_is_complete_with_zero_objects() raises:
     var grid = app.Grid(rows=2, cols=2, cells=[0, 0, 0, 0])
     var d = app.Decomposition(grid)
     assert_equal(len(d.objects), 0)
     assert_equal(d.is_complete(), True)
 
 
-def test_grid_is_complete_once_every_non_background_cell_is_claimed() raises:
+def test_decomposition_is_complete_once_every_non_background_cell_is_claimed() raises:
     # 1 1 0
     # 0 0 2
     var grid = app.Grid(rows=2, cols=3, cells=[1, 1, 0, 0, 0, 2])
@@ -113,6 +122,31 @@ def test_background_cell_cannot_belong_to_an_object() raises:
     assert_equal(len(d.objects), 0)
 
 
+def test_object_must_be_distinct_cells_inside_the_grid() raises:
+    # 1 1 0
+    # 0 0 0
+    var d = app.Decomposition(app.Grid(rows=2, cols=3, cells=[1, 1, 0, 0, 0, 0]))
+    with assert_raises():
+        d.add_object([0, 0, 1])
+    with assert_raises():
+        d.add_object(List[Int]())
+    with assert_raises():
+        d.add_object([0, 6])
+    with assert_raises():
+        d.add_object([-1, 0])
+    assert_equal(len(d.objects), 0)
+
+
+def test_objects_are_kept_in_reading_order() raises:
+    # 0 0 7
+    # 5 0 0
+    var d = app.Decomposition(app.Grid(rows=2, cols=3, cells=[0, 0, 7, 5, 0, 0]))
+    d.add_object([3])  # the Labeler clicked the lower object first
+    d.add_object([2])
+    assert_equal(d.objects[0], [2])
+    assert_equal(d.objects[1], [3])
+
+
 def test_removing_an_object_frees_its_cells() raises:
     # 1 0 2
     # 0 0 0
@@ -137,8 +171,16 @@ def test_labeler_can_override_background() raises:
     var grid = app.Grid(rows=1, cols=3, cells=[3, 3, 0])
     var d = app.Decomposition(grid, background=0)
     assert_equal(d.background, 0)
-    assert_equal(d.background_source, "user")
+    assert_equal(d.background_source, "labeler")
     assert_equal(d.unclaimed(), [0, 1])
+
+
+def test_background_override_must_be_a_color() raises:
+    var grid = app.Grid(rows=1, cols=3, cells=[3, 3, 0])
+    with assert_raises():
+        _ = app.Decomposition(grid, background=12)
+    with assert_raises():
+        _ = app.Decomposition(grid, background=-1)
 
 
 def test_reconstruction_shows_only_claimed_objects_on_background() raises:
@@ -187,9 +229,27 @@ def test_unknown_split_or_side_raises() raises:
         _ = task.grid("train", 0, "inptu")
 
 
+def test_pair_index_out_of_range_raises() raises:
+    var task = app.load_task(app.get_path(FILE))
+    with assert_raises():
+        _ = task.grid("test", 1, "input")
+    with assert_raises():
+        _ = task.grid("train", -1, "input")
+
+
 def test_load_task_rejects_ragged_rows() raises:
     with assert_raises():
-        _ = app.load_task(app.get_path("./data/test_training/ragged.json"))
+        _ = app.load_task(app.get_path("./tests/fixtures/ragged.json"))
+
+
+def test_load_task_rejects_colors_outside_0_to_9() raises:
+    with assert_raises():
+        _ = app.load_task(app.get_path("./tests/fixtures/bad_color.json"))
+
+
+def test_load_task_rejects_empty_grids() raises:
+    with assert_raises(contains="empty"):
+        _ = app.load_task(app.get_path("./tests/fixtures/empty.json"))
 
 
 def test_save_writes_decomposition_file_at_grid_path() raises:
@@ -213,7 +273,7 @@ def test_saved_decomposition_loads_back() raises:
 
     var loaded = app.load(root, id, grid)
     assert_equal(loaded.background, 0)
-    assert_equal(loaded.background_source, "user")
+    assert_equal(loaded.background_source, "labeler")
     assert_equal(len(loaded.objects), 2)
     assert_equal(loaded.objects[0], [0, 1])
     assert_equal(loaded.objects[1], [4])
@@ -223,7 +283,7 @@ def read_json(path: Path) raises -> PythonObject:
     return Python.import_module("json").loads(path.read_text())
 
 
-def test_object_file_holds_cropped_shape_and_offset() raises:
+def test_object_file_holds_crop_and_offset() raises:
     var root = mkdtemp()
     var id = app.GridId(dataset="training", task="12345678", split="train", pair=1, side="output")
     # 5 0 0
@@ -235,12 +295,12 @@ def test_object_file_holds_cropped_shape_and_offset() raises:
     app.save(d, id, root)
 
     var dir = Path(root) / "training/12345678"
-    var l_shape = read_json(dir / "12345678_train1_out_obj01.json")
-    assert_equal(String(l_shape["offset"]), "[0, 0]")
-    assert_equal(String(l_shape["shape"]), "[[5, -1], [5, 5]]")
+    var corner = read_json(dir / "12345678_train1_out_obj01.json")
+    assert_equal(String(corner["offset"]), "[0, 0]")
+    assert_equal(String(corner["crop"]), "[[5, -1], [5, 5]]")
     var dot = read_json(dir / "12345678_train1_out_obj02.json")
     assert_equal(String(dot["offset"]), "[2, 2]")
-    assert_equal(String(dot["shape"]), "[[7]]")
+    assert_equal(String(dot["crop"]), "[[7]]")
 
 
 def test_object_file_carries_grid_and_object_metadata() raises:
@@ -277,7 +337,7 @@ def test_state_follows_labeling_progress() raises:
     assert_equal(d.state(), "complete")
 
 
-def test_flagged_grid_stays_flagged_until_cleared() raises:
+def test_flagged_decomposition_stays_flagged_until_cleared() raises:
     # 1 0 2
     # 0 0 0
     var d = app.Decomposition(app.Grid(rows=2, cols=3, cells=[1, 0, 2, 0, 0, 0]))
@@ -359,6 +419,21 @@ def test_resaving_leaves_other_grids_files_alone() raises:
     var dir = Path(root) / "training/12345678"
     assert_equal((dir / "12345678_train1_out_obj01.json").exists(), True)
     assert_equal((dir / "12345678_train10_in_obj01.json").exists(), True)
+
+
+def test_loading_files_that_do_not_match_the_grid_raises() raises:
+    var root = mkdtemp()
+    var id = app.GridId(dataset="training", task="12345678", split="train", pair=0, side="input")
+    # 0 5 0
+    # 0 0 0
+    var d = app.Decomposition(app.Grid(rows=2, cols=3, cells=[0, 5, 0, 0, 0, 0]))
+    d.add_object([1])
+    app.save(d, id, root)
+
+    with assert_raises(contains="size"):
+        _ = app.load(root, id, app.Grid(rows=3, cols=2, cells=[0, 5, 0, 0, 0, 0]))
+    with assert_raises(contains="color"):
+        _ = app.load(root, id, app.Grid(rows=2, cols=3, cells=[0, 6, 0, 0, 0, 0]))
 
 
 def test_loading_a_never_saved_grid_gives_a_fresh_decomposition() raises:

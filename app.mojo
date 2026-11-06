@@ -1,10 +1,5 @@
 from std.pathlib import Path
 from std.python import Python, PythonObject
-from layout import TileTensor
-from layout.tile_layout import row_major
-
-comptime FILE = "./data/training/f1cefba8.json"
-comptime image_size = (30, 30)
 
 comptime NUM_COLORS = 10
 
@@ -24,8 +19,10 @@ def background(grid: Grid) -> Int:
             best = color
     return best
 
-def propose(grid: Grid, row: Int, col: Int, claimed: List[Bool], bg: Int) -> List[Int]:
+def propose(grid: Grid, row: Int, col: Int, claimed: List[Bool], bg: Int) raises -> List[Int]:
     """Flood fill from (row, col) through non-background cells. Returns cell indices in reading order."""
+    if row < 0 or row >= grid.rows or col < 0 or col >= grid.cols:
+        raise Error(t"Cell ({row}, {col}) is outside the grid")
     var start = row * grid.cols + col
     if claimed[start] or grid.cells[start] == bg:
         return List[Int]()
@@ -52,6 +49,20 @@ def propose(grid: Grid, row: Int, col: Int, claimed: List[Bool], bg: Int) -> Lis
             cells.append(i)
     return cells^
 
+def _first_cell(cells: List[Int]) -> Int:
+    var first = cells[0]
+    for i in cells:
+        first = min(first, i)
+    return first
+
+def _sort_reading_order(mut objects: List[List[Int]]):
+    """Insertion sort by each Object's first cell in reading order."""
+    for i in range(1, len(objects)):
+        var j = i
+        while j > 0 and _first_cell(objects[j]) < _first_cell(objects[j - 1]):
+            objects.swap_elements(j, j - 1)
+            j -= 1
+
 struct Decomposition(Copyable, Movable):
     var grid: Grid
     var background: Int
@@ -68,22 +79,30 @@ struct Decomposition(Copyable, Movable):
         self.flagged = False
         self.note = ""
 
-    def __init__(out self, grid: Grid, *, background: Int):
+    def __init__(out self, grid: Grid, *, background: Int) raises:
+        if background < 0 or background >= NUM_COLORS:
+            raise Error(t"Background {background} is not a color")
         self.grid = grid.copy()
         self.background = background
-        self.background_source = "user"
+        self.background_source = "labeler"
         self.objects = List[List[Int]]()
         self.flagged = False
         self.note = ""
 
     def add_object(mut self, cells: List[Int]) raises:
+        if len(cells) == 0:
+            raise Error("An object needs at least one cell")
         var claimed = self.claimed()
         for i in cells:
+            if i < 0 or i >= len(self.grid.cells):
+                raise Error(t"Cell {i} is outside the grid")
             if claimed[i]:
                 raise Error(t"Cell {i} already belongs to an object")
             if self.grid.cells[i] == self.background:
                 raise Error(t"Cell {i} is background")
+            claimed[i] = True  # also catches a cell repeated within this object
         self.objects.append(cells.copy())
+        _sort_reading_order(self.objects)
 
     def remove_object(mut self, index: Int):
         _ = self.objects.pop(index)
@@ -159,17 +178,25 @@ struct Task(Copyable, Movable):
             raise Error(t"Unknown split: {split}")
         if side != "input" and side != "output":
             raise Error(t"Unknown side: {side}")
-        var p = self.train[pair].copy() if split == "train" else self.test[pair].copy()
+        ref pairs = self.train if split == "train" else self.test
+        if pair < 0 or pair >= len(pairs):
+            raise Error(t"No {split} pair {pair}")
+        var p = pairs[pair].copy()
         return p.input.copy() if side == "input" else p.output.copy()
 
 def _to_grid(rows: PythonObject) raises -> Grid:
+    if len(rows) == 0 or len(rows[0]) == 0:
+        raise Error("Grid is empty")
     var cols = len(rows[0])
     var cells = List[Int]()
     for row in rows:
         if len(row) != cols:
             raise Error("Grid rows have different lengths")
         for c in row:
-            cells.append(Int(py=c))
+            var color = Int(py=c)
+            if color < 0 or color >= NUM_COLORS:
+                raise Error(t"Color {color} is outside 0-9")
+            cells.append(color)
     return Grid(rows=len(rows), cols=cols, cells=cells^)
 
 def _to_pairs(pairs: PythonObject) raises -> List[Pair]:
@@ -224,14 +251,14 @@ def _object_json(d: Decomposition, id: GridId, index: Int) raises -> PythonObjec
         r1 = max(r1, i // cols)
         c0 = min(c0, i % cols)
         c1 = max(c1, i % cols)
-    var shape = Python.list()
+    var crop = Python.list()
     for _ in range(r1 - r0 + 1):
         var row = Python.list()
         for _ in range(c1 - c0 + 1):
             row.append(-1)
-        shape.append(row)
+        crop.append(row)
     for i in cells:
-        shape[i // cols - r0][i % cols - c0] = d.grid.cells[i]
+        crop[i // cols - r0][i % cols - c0] = d.grid.cells[i]
     var used = List[Bool](length=NUM_COLORS, fill=False)
     for i in cells:
         used[d.grid.cells[i]] = True
@@ -244,40 +271,25 @@ def _object_json(d: Decomposition, id: GridId, index: Int) raises -> PythonObjec
     obj["colors"] = colors
     obj["cell_count"] = len(cells)
     obj["offset"] = Python.list(r0, c0)
-    obj["shape"] = shape
+    obj["crop"] = crop
     return obj
-
-def _first_cell(cells: List[Int]) -> Int:
-    var first = cells[0]
-    for i in cells:
-        first = min(first, i)
-    return first
-
-def _sort_reading_order(mut objects: List[List[Int]]):
-    """Insertion sort by each Object's first cell in reading order."""
-    for i in range(1, len(objects)):
-        var j = i
-        while j > 0 and _first_cell(objects[j]) < _first_cell(objects[j - 1]):
-            objects.swap_elements(j, j - 1)
-            j -= 1
 
 def save(d: Decomposition, id: GridId, root: String) raises:
     var json = Python.import_module("json")
+    var os = Python.import_module("os")
     var dir = id.dir(root)
-    Python.import_module("os").makedirs(String(dir), exist_ok=True)
+    os.makedirs(String(dir), exist_ok=True)
     var prefix = id.stem() + "_obj"
     for name in dir.listdir():
         if String(name).startswith(prefix):
-            Python.import_module("os").remove(String(dir / name))
-    var ordered = d.copy()
-    _sort_reading_order(ordered.objects)
+            os.remove(String(dir / name))
     var names = Python.list()
-    for n in range(len(ordered.objects)):
+    for n in range(len(d.objects)):
         var num = String(n + 1)
         if n + 1 < 10:
             num = "0" + num
         var name = String(t"{id.stem()}_obj{num}.json")
-        (dir / name).write_text(String(json.dumps(_object_json(ordered, id, n))))
+        (dir / name).write_text(String(json.dumps(_object_json(d, id, n))))
         names.append(name)
     var doc = _grid_json(d, id)
     doc["state"] = d.state()
@@ -292,6 +304,8 @@ def load(root: String, id: GridId, grid: Grid) raises -> Decomposition:
     if not path.exists():
         return Decomposition(grid)
     var doc = json.loads(read_file(path))
+    if Int(py=doc["grid_size"][0]) != grid.rows or Int(py=doc["grid_size"][1]) != grid.cols:
+        raise Error(t"Saved grid size does not match {grid.rows}x{grid.cols} grid: {path}")
     var d = Decomposition(grid, background=Int(py=doc["background"]))
     d.background_source = String(py=doc["background_source"])
     for name in doc["objects"]:
@@ -299,23 +313,16 @@ def load(root: String, id: GridId, grid: Grid) raises -> Decomposition:
         var r0 = Int(py=obj["offset"][0])
         var c0 = Int(py=obj["offset"][1])
         var cells = List[Int]()
-        var shape = obj["shape"]
-        for r in range(len(shape)):
-            for c in range(len(shape[r])):
-                if Int(py=shape[r][c]) >= 0:
-                    cells.append((r0 + r) * grid.cols + c0 + c)
+        var crop = obj["crop"]
+        for r in range(len(crop)):
+            for c in range(len(crop[r])):
+                var color = Int(py=crop[r][c])
+                if color >= 0:
+                    var i = (r0 + r) * grid.cols + c0 + c
+                    if grid.cells[i] != color:
+                        raise Error(t"Saved color does not match grid at cell {i}: {name}")
+                    cells.append(i)
         d.add_object(cells)
     if String(py=doc["state"]) == "flagged":
         d.flag(String(py=doc["note"]))
     return d^
-
-def main() raises:
-
-    var json_file = get_path(FILE)
-    var json_text: String = read_file(json_file)
-
-    var storage = Array[Int8, image_size[0] * image_size[1]](uninitialized=True)
-    var image = TileTensor(storage, row_major(image_size)).fill(0)
-    
-     
-    
